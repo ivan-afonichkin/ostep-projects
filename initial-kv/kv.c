@@ -152,6 +152,9 @@ void process_command(db_t *db, char *cmd_arguments) {
 
 db_t *load_database(char const *path) {
     db_t *db = (db_t *)malloc(sizeof(db_t));
+    for (int i = 0; i < N_BUCKETS; ++i) {
+        db->buckets[i] = NULL;
+    }
     FILE *f = fopen(path, "r");
 
     if (f == NULL) {

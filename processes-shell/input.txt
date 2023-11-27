@@ -1,4 +1,14 @@
-/bin/ls -la
-ls -ltr
+path /bin/ /Users/ivanafonichkin/.pyenv/shims/
+echo "Python version from local users directory"
 
-/bin/cat wish.c
+python --version
+/bin/ls -la
+
+echo "Inside current working directory"
+ls -ltr
+pwd
+cd tests
+echo "Inside tests"
+ls -ltr
+exit
+echo "This should not be executed"

@@ -12,16 +12,51 @@
 int const MAX_TOKENS = 255;
 char *DEFAULT_PATH = "/bin/";
 int const MAX_PATH_LEN = 256;
+int const N_BUILTIN_COMMANDS = 3;
+int const N_MAX_SEARCH_PATHS = 255;
+char *const BUILTIN_COMMANDS[N_BUILTIN_COMMANDS] = {"exit", "cd", "path"};
+
 
 
 char **init_search_paths() {
-    char **paths = (char **) malloc(2 * sizeof(char *));
+    char **paths = (char **) malloc(N_MAX_SEARCH_PATHS * sizeof(char *));
     paths[0] = DEFAULT_PATH;
     paths[1] = NULL;
     return paths;
 }
 
+void execute_cd(char *tokens[]) {
+    if (chdir(tokens[1]) != 0) {
+        fprintf(stderr, "wish: incorrect input to cd.");
+        exit(1);
+    }
+}
+
+void execute_exit(char *tokens[]) {
+    exit(0);
+}
+
+void execute_path(char **tokens, char **existingSearchPaths) {
+    /**
+     * Input tokens look like {"path", "/bin", "/bin/ls", NULL}, so we just move by 1 pointer.
+     * */
+    int idx = 0;
+    while (tokens[idx+1] != NULL) {
+        int bufferSize = strlen(tokens[idx + 1]) + 1;
+        char *buffer = malloc(bufferSize);
+        strlcpy(buffer, tokens[idx + 1], bufferSize);
+        existingSearchPaths[idx] = buffer;
+        idx += 1;
+    }
+    existingSearchPaths[idx] = NULL;
+}
+
 bool is_builtin_command(char *command) {
+    for (int i = 0; i < N_BUILTIN_COMMANDS; ++i) {
+        if (0 == strcmp(command, BUILTIN_COMMANDS[i])) {
+            return true;
+        }
+    }
     return false;
 }
 
@@ -30,13 +65,22 @@ void execute_command(char *tokens[], char **searchPaths) {
      * tokens is a set of tokens that should be terminated by NULL characters.
      */
 
-    if (tokens[0] == NULL) {
-        fprintf(stderr, "Empty input command\n");
+    if (tokens[0] == NULL || 0 == strcmp(tokens[0], "")) {
+        // Empty input command
         return;
     }
 
     if (is_builtin_command(tokens[0])) {
-    
+        if (0 == strcmp(tokens[0], "cd")) {
+            execute_cd(tokens);
+        } else if (0 == strcmp(tokens[0], "exit")) {
+            execute_exit(tokens);
+        } else if (0 == strcmp(tokens[0], "path")) {
+            execute_path(tokens, searchPaths);
+        } else {
+            fprintf(stderr, "wish: Built-in command %s not found.\n", tokens[0]);
+            exit(1);
+        }
     } else {
         // It's not a buil-in command and we should check if it's executable by default.
         if (0 == access(tokens[0], X_OK)) {
@@ -50,12 +94,14 @@ void execute_command(char *tokens[], char **searchPaths) {
             while ((curSearchPath = searchPaths[idx++]) != NULL) {
                 strlcpy(buffer, curSearchPath, MAX_PATH_LEN);
                 strlcat(buffer, tokens[0], MAX_PATH_LEN);
-                printf("Checking executable at: %s\n", buffer);
+                // printf("Checking executable at: %s\n", buffer);
                 if (0 == access(buffer, X_OK)) {
                     tokens[0] = buffer;
                     execute_external_command(tokens[0], tokens);
+                    return;
                 }
             }
+            fprintf(stderr, "wish: Command %s not found\n", tokens[0]);
         }
     }
 
@@ -73,7 +119,7 @@ void execute_external_command(const char *executablePath, char *const argv[]) {
         // We communicate with it through the opened file descriptors.
         // In this case we don't overwrite any existing file descriptors.
         if (!execv(executablePath, argv)) {
-            fprintf(stderr, "Failed to run execv!\n");
+            fprintf(stderr, "wish: Failed to run execv!\n");
         }
     } else {
         // This is a main (parent process).
@@ -82,10 +128,10 @@ void execute_external_command(const char *executablePath, char *const argv[]) {
         waitpid(processId, &stat_loc, 0);
         if (!WIFEXITED(stat_loc)) {
             if (WIFSIGNALED(stat_loc)) {
-                fprintf(stderr, "Process with %d PID terminated due to getting a signal %d\n", processId, WTERMSIG(stat_loc));
+                fprintf(stderr, "wish: Process with %d PID terminated due to getting a signal %d\n", processId, WTERMSIG(stat_loc));
             }
 
-            fprintf(stderr, "Process with %d PID didnot exit successfully.", processId);
+            fprintf(stderr, "wish: Process with %d PID didnot exit successfully.", processId);
         }
     }
 };
@@ -98,13 +144,13 @@ int main(int argc, char *argv[]) {
 
     if (argc != 1) {
         if (argc > 2) {
-            fprintf(stderr, "Only one input file is supported\n");
+            fprintf(stderr, "wish: Only one input file is supported\n");
             exit(1);
         }
 
         stream = fopen(argv[1], "r");
         if (stream == NULL) {
-            fprintf(stderr, "Cannot open input file %s\n", argv[1]);
+            fprintf(stderr, "wish: Cannot open input file %s\n", argv[1]);
             exit(1);
         }
     }
@@ -121,7 +167,7 @@ int main(int argc, char *argv[]) {
         }
         buffer[bytesRead - 1] = '\0';
         if (verbose) {
-            printf("Input buffer: %s\n", buffer);
+            // printf("Input buffer: %s\n", buffer);
         }
         char *bufferToFree = buffer;
         int nTokens = 0;

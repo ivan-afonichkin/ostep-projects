@@ -1,0 +1,4 @@
+/bin/ls -la
+ls -ltr
+
+/bin/cat wish.c

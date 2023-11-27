@@ -1,0 +1,13 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-Wall",
+      "-Werror",
+      "-c",
+      "wish.c"
+    ],
+    "directory": "/Users/ivanafonichkin/Programming/ostep-projects/processes-shell",
+    "file": "/Users/ivanafonichkin/Programming/ostep-projects/processes-shell/wish.c"
+  }
+]

@@ -15,8 +15,10 @@ char *DEFAULT_PATH = "/bin/";
 int const MAX_PATH_LEN = 256;
 int const N_BUILTIN_COMMANDS = 3;
 int const N_MAX_SEARCH_PATHS = 255;
-char *const BUILTIN_COMMANDS[N_BUILTIN_COMMANDS] = {"exit", "cd", "path"};
+char * const BUILTIN_COMMANDS[N_BUILTIN_COMMANDS] = {"exit", "cd", "path"};
 char * const ERROR_MESSAGE = "An error has occurred\n";
+char * const WHITESPACES = " \t\n\r";
+int const MAX_EXTERNAL_COMMANDS = 8;
 
 
 char *ltrim(char *s) {
@@ -101,27 +103,31 @@ void execute_command(char *tokens[], char **searchPaths) {
             fprintf(stderr, "%s", ERROR_MESSAGE);
         }
     } else {
-        // It's not a buil-in command and we should check if it's executable by default.
-        if (0 == access(tokens[0], X_OK)) {
-            // If we have access, we can just go directory and execute it.
-            execute_external_command(tokens);
-        } else {
-            // This might be a in our search paths, so let's check it.
-            char *curSearchPath = NULL;
-            int idx = 0;
-            char buffer[MAX_PATH_LEN] = {0};
-            while ((curSearchPath = searchPaths[idx++]) != NULL) {
-                strlcpy(buffer, curSearchPath, MAX_PATH_LEN);
-                strlcat(buffer, tokens[0], MAX_PATH_LEN);
-                // printf("Checking executable at: %s\n", buffer);
-                if (0 == access(buffer, X_OK)) {
-                    tokens[0] = buffer;
-                    execute_external_command(tokens);
-                    return;
+        char **beginningTokens = tokens;
+        pid_t processPids[MAX_EXTERNAL_COMMANDS];
+        int nPids = 0;
+        for (int idx = 0; tokens[idx] != NULL; ++idx) {
+            if (0 == strcmp(tokens[idx], "&")) {
+                tokens[idx] = NULL;
+                if (beginningTokens[0] != NULL) {
+                    processPids[nPids++] = execute_external_command(beginningTokens, searchPaths, false);
+                    beginningTokens = (tokens + idx + 1);
                 }
             }
-            fprintf(stderr, "%s", ERROR_MESSAGE);
         }
+        if (beginningTokens[0] != NULL) {
+            processPids[nPids++] = execute_external_command(beginningTokens, searchPaths, false);
+        }
+
+        for (int idx = 0; idx < nPids; ++idx) {
+            int stat_loc = 0; 
+            if (processPids[idx] == -1) continue;
+            waitpid(processPids[idx], &stat_loc, 0);
+            if (!WIFEXITED(stat_loc)) {
+                fprintf(stderr, "%s", ERROR_MESSAGE);
+            }
+        }
+
     }
 
 }
@@ -165,12 +171,34 @@ bool is_correct_redirection(char *tokens[]) {
     return true; 
 }
 
-void execute_external_command(char *tokens[]) {
+pid_t execute_external_command(char *tokens[], char **searchPaths, bool blocking) {
     /**
      * Executes command `executablePath` with arguments `argv` in a new process and returns process PID of that process.
      * argv should be terminated with NULL.
      * List of searchable paths is defined in `searchPaths`.
      */
+
+    if (0 != access(tokens[0], X_OK)) {
+        // This might be a in our search paths, so let's check it.
+        char *curSearchPath = NULL;
+        int idx = 0;
+        bool found = false;
+        char buffer[MAX_PATH_LEN] = {0};
+        while ((curSearchPath = searchPaths[idx++]) != NULL) {
+            strlcpy(buffer, curSearchPath, MAX_PATH_LEN);
+            strlcat(buffer, tokens[0], MAX_PATH_LEN);
+            // printf("Checking executable at: %s\n", buffer);
+            if (0 == access(buffer, X_OK)) {
+                tokens[0] = buffer;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            fprintf(stderr, "%s", ERROR_MESSAGE);
+            return -1;
+        }
+    }
 
     char *executablePath = tokens[0];
     char **argv = tokens;
@@ -184,39 +212,44 @@ void execute_external_command(char *tokens[]) {
         if (contains_redirection(tokens)) {
             if (!is_correct_redirection(tokens)) {
                 fprintf(stderr, "%s", ERROR_MESSAGE);
-                return;
+                return -1;
             }
             char *redirectionPath = get_redirection_file_path(tokens);
             if (redirectionPath == NULL) {
                 fprintf(stderr, "%s", ERROR_MESSAGE);
-                return;
+                return -1;
             }
             fclose(stdout);
             FILE *newStdout = fopen(redirectionPath, "w");
             if (newStdout == NULL) {
                 fprintf(stderr, "%s", ERROR_MESSAGE);
-                return;
+                return -1;
             }
             fclose(stderr);
             FILE *newStderr = fopen(redirectionPath, "w");
             if (newStderr == NULL) {
                 fprintf(stderr, "%s", ERROR_MESSAGE);
-                return;
+                return -1;
             }
         }
 
         if (!execv(executablePath, argv)) {
             fprintf(stderr, "%s", ERROR_MESSAGE);
+            return -1;
         }
     } else {
         // This is a main (parent process).
-        int stat_loc = 0; 
         // This is a blocking call until the process is finished.
-        waitpid(processId, &stat_loc, 0);
-        if (!WIFEXITED(stat_loc)) {
-            fprintf(stderr, "%s", ERROR_MESSAGE);
+        if (blocking) {
+            int stat_loc = 0; 
+            waitpid(processId, &stat_loc, 0);
+            if (!WIFEXITED(stat_loc)) {
+                fprintf(stderr, "%s", ERROR_MESSAGE);
+            }
         }
+        return processId;
     }
+    return -1;
 };
 
 int main(int argc, char *argv[]) {
@@ -257,7 +290,14 @@ int main(int argc, char *argv[]) {
             // printf("Input buffer: %s\n", buffer);
         }
         int nTokens = 0;
-        while ((tokens[nTokens++] = strsep(&buffer, " ")) != NULL);
+        char *curToken = NULL;
+        while ((curToken = strsep(&buffer, WHITESPACES)) != NULL) {
+            if (0 == strcmp(curToken, "")) {
+                continue;
+            }
+            tokens[nTokens++] = curToken;
+        }
+        tokens[nTokens] = NULL;
 
         execute_command(tokens, searchPaths);
 

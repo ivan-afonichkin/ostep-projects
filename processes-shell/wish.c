@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <signal.h>
 #include "wish.h"
 #include <stdio.h>
@@ -15,8 +16,25 @@ int const MAX_PATH_LEN = 256;
 int const N_BUILTIN_COMMANDS = 3;
 int const N_MAX_SEARCH_PATHS = 255;
 char *const BUILTIN_COMMANDS[N_BUILTIN_COMMANDS] = {"exit", "cd", "path"};
+char * const ERROR_MESSAGE = "An error has occurred\n";
 
 
+char *ltrim(char *s) {
+    while (isspace(*s)) {
+        s++;
+    }
+
+    return s;
+}
+
+char *rtrim(char *s) {
+    char *last_c = s + strlen(s) - 1;
+    while (isspace(*last_c)) {
+        last_c--;
+    }
+    *(last_c+1) = '\0';
+    return s;
+}
 
 char **init_search_paths() {
     char **paths = (char **) malloc(N_MAX_SEARCH_PATHS * sizeof(char *));
@@ -27,12 +45,14 @@ char **init_search_paths() {
 
 void execute_cd(char *tokens[]) {
     if (chdir(tokens[1]) != 0) {
-        fprintf(stderr, "wish: incorrect input to cd.");
-        exit(1);
+        fprintf(stderr, "%s", ERROR_MESSAGE);
     }
 }
 
 void execute_exit(char *tokens[]) {
+    if (tokens[1] != NULL) {
+        fprintf(stderr, "%s", ERROR_MESSAGE);
+    }
     exit(0);
 }
 
@@ -78,8 +98,7 @@ void execute_command(char *tokens[], char **searchPaths) {
         } else if (0 == strcmp(tokens[0], "path")) {
             execute_path(tokens, searchPaths);
         } else {
-            fprintf(stderr, "wish: Built-in command %s not found.\n", tokens[0]);
-            exit(1);
+            fprintf(stderr, "%s", ERROR_MESSAGE);
         }
     } else {
         // It's not a buil-in command and we should check if it's executable by default.
@@ -101,10 +120,22 @@ void execute_command(char *tokens[], char **searchPaths) {
                     return;
                 }
             }
-            fprintf(stderr, "wish: Command %s not found\n", tokens[0]);
+            fprintf(stderr, "%s", ERROR_MESSAGE);
         }
     }
 
+}
+
+bool contains_redirection(char *tokens[]) {
+    char *curToken = NULL;
+    int idx = 0;
+    while ((curToken = tokens[idx++]) != NULL) {
+        if (0 == strcmp(curToken, ">")) {
+            return true; 
+        }
+    }
+
+    return false;
 }
 
 char *get_redirection_file_path(char *tokens[]) {
@@ -120,13 +151,26 @@ char *get_redirection_file_path(char *tokens[]) {
     return NULL; 
 }
 
+bool is_correct_redirection(char *tokens[]) {
+    char *curToken = NULL;
+    int idx = 0;
+    while ((curToken = tokens[idx++]) != NULL) {
+        if (0 == strcmp(curToken, ">")) {
+            if (tokens[idx + 1] != NULL) {
+                return false;
+            }
+        }
+    }
+
+    return true; 
+}
+
 void execute_external_command(char *tokens[]) {
     /**
      * Executes command `executablePath` with arguments `argv` in a new process and returns process PID of that process.
      * argv should be terminated with NULL.
      * List of searchable paths is defined in `searchPaths`.
      */
-
 
     char *executablePath = tokens[0];
     char **argv = tokens;
@@ -136,24 +180,33 @@ void execute_external_command(char *tokens[]) {
         // This is a child process.
         // We communicate with it through the opened file descriptors.
         // In this case we don't overwrite any existing file descriptors.
-        char *redirectionPath = get_redirection_file_path(tokens);
-        if (redirectionPath != NULL) {
+        
+        if (contains_redirection(tokens)) {
+            if (!is_correct_redirection(tokens)) {
+                fprintf(stderr, "%s", ERROR_MESSAGE);
+                return;
+            }
+            char *redirectionPath = get_redirection_file_path(tokens);
+            if (redirectionPath == NULL) {
+                fprintf(stderr, "%s", ERROR_MESSAGE);
+                return;
+            }
             fclose(stdout);
             FILE *newStdout = fopen(redirectionPath, "w");
             if (newStdout == NULL) {
-                fprintf(stderr, "wish: cannot open file %s for redirection\n", redirectionPath);
+                fprintf(stderr, "%s", ERROR_MESSAGE);
                 return;
             }
             fclose(stderr);
             FILE *newStderr = fopen(redirectionPath, "w");
             if (newStderr == NULL) {
-                fprintf(stderr, "wish: cannot open file %s for redirection\n", redirectionPath);
+                fprintf(stderr, "%s", ERROR_MESSAGE);
                 return;
             }
         }
 
         if (!execv(executablePath, argv)) {
-            fprintf(stderr, "wish: Failed to run execv!\n");
+            fprintf(stderr, "%s", ERROR_MESSAGE);
         }
     } else {
         // This is a main (parent process).
@@ -161,11 +214,7 @@ void execute_external_command(char *tokens[]) {
         // This is a blocking call until the process is finished.
         waitpid(processId, &stat_loc, 0);
         if (!WIFEXITED(stat_loc)) {
-            if (WIFSIGNALED(stat_loc)) {
-                fprintf(stderr, "wish: Process with %d PID terminated due to getting a signal %d\n", processId, WTERMSIG(stat_loc));
-            }
-
-            fprintf(stderr, "wish: Process with %d PID didnot exit successfully.", processId);
+            fprintf(stderr, "%s", ERROR_MESSAGE);
         }
     }
 };
@@ -178,13 +227,13 @@ int main(int argc, char *argv[]) {
 
     if (argc != 1) {
         if (argc > 2) {
-            fprintf(stderr, "wish: Only one input file is supported\n");
+            fprintf(stderr, "%s", ERROR_MESSAGE);
             exit(1);
         }
 
         stream = fopen(argv[1], "r");
         if (stream == NULL) {
-            fprintf(stderr, "wish: Cannot open input file %s\n", argv[1]);
+            fprintf(stderr, "%s", ERROR_MESSAGE);
             exit(1);
         }
     }
@@ -199,13 +248,17 @@ int main(int argc, char *argv[]) {
             // EOF is reached.
             return 0;
         }
+        char *bufferToFree = buffer;
         buffer[bytesRead - 1] = '\0';
+
+        buffer = ltrim(rtrim(buffer));
+
         if (verbose) {
             // printf("Input buffer: %s\n", buffer);
         }
-        char *bufferToFree = buffer;
         int nTokens = 0;
         while ((tokens[nTokens++] = strsep(&buffer, " ")) != NULL);
+
         execute_command(tokens, searchPaths);
 
         free(bufferToFree);

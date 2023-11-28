@@ -85,7 +85,7 @@ void execute_command(char *tokens[], char **searchPaths) {
         // It's not a buil-in command and we should check if it's executable by default.
         if (0 == access(tokens[0], X_OK)) {
             // If we have access, we can just go directory and execute it.
-            execute_external_command(tokens[0], tokens);
+            execute_external_command(tokens);
         } else {
             // This might be a in our search paths, so let's check it.
             char *curSearchPath = NULL;
@@ -97,7 +97,7 @@ void execute_command(char *tokens[], char **searchPaths) {
                 // printf("Checking executable at: %s\n", buffer);
                 if (0 == access(buffer, X_OK)) {
                     tokens[0] = buffer;
-                    execute_external_command(tokens[0], tokens);
+                    execute_external_command(tokens);
                     return;
                 }
             }
@@ -107,17 +107,51 @@ void execute_command(char *tokens[], char **searchPaths) {
 
 }
 
-void execute_external_command(const char *executablePath, char *const argv[]) {
+char *get_redirection_file_path(char *tokens[]) {
+    char *curToken = NULL;
+    int idx = 0;
+    while ((curToken = tokens[idx++]) != NULL) {
+        if (0 == strcmp(curToken, ">")) {
+            tokens[idx - 1] = NULL;
+            return tokens[idx];
+        }
+    }
+
+    return NULL; 
+}
+
+void execute_external_command(char *tokens[]) {
     /**
      * Executes command `executablePath` with arguments `argv` in a new process and returns process PID of that process.
      * argv should be terminated with NULL.
      * List of searchable paths is defined in `searchPaths`.
      */
+
+
+    char *executablePath = tokens[0];
+    char **argv = tokens;
+
     pid_t processId = fork();
     if (processId == 0) {
         // This is a child process.
         // We communicate with it through the opened file descriptors.
         // In this case we don't overwrite any existing file descriptors.
+        char *redirectionPath = get_redirection_file_path(tokens);
+        if (redirectionPath != NULL) {
+            fclose(stdout);
+            FILE *newStdout = fopen(redirectionPath, "w");
+            if (newStdout == NULL) {
+                fprintf(stderr, "wish: cannot open file %s for redirection\n", redirectionPath);
+                return;
+            }
+            fclose(stderr);
+            FILE *newStderr = fopen(redirectionPath, "w");
+            if (newStderr == NULL) {
+                fprintf(stderr, "wish: cannot open file %s for redirection\n", redirectionPath);
+                return;
+            }
+        }
+
         if (!execv(executablePath, argv)) {
             fprintf(stderr, "wish: Failed to run execv!\n");
         }
